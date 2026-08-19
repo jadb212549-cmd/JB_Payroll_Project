@@ -8,25 +8,18 @@ on:
   pull_request:
     branches: [ main, master ]
   workflow_dispatch:
-    inputs:
-      create_release:
-        description: 'Create GitHub Release on completion'
-        required: false
-        type: boolean
-        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/v') }}
 
-permissions: {}
+permissions:
+  contents: read
 
 jobs:
   build-windows:
     name: Build Windows Portable & Installer
     runs-on: windows-latest
-    permissions:
-      contents: read
 
     steps:
       - name: Checkout Repository
@@ -55,32 +48,16 @@ jobs:
       - name: Build Web Frontend Assets
         run: npm run build
 
-      - name: Validate Frontend Build Output
+      - name: Validate Frontend Output
         shell: powershell
         run: |
           Write-Host "Validating frontend build output..."
-          $tauriConfPath = "src-tauri/tauri.conf.json"
-          $distDir = "dist"
-          if (Test-Path $tauriConfPath) {
-            $conf = Get-Content $tauriConfPath -Raw | ConvertFrom-Json
-            if ($conf.build -and $conf.build.distDir) {
-              $rawDist = $conf.build.distDir
-              $distDir = ($rawDist -replace '^\.\./', '') -replace '^\./', ''
-            }
-          }
-          Write-Host "Detected frontend output directory: $distDir"
-          if (-not (Test-Path $distDir)) {
-            Write-Error "Frontend build completed but expected output directory was not found: $distDir"
+          if (-not (Test-Path "dist/index.html")) {
+            Write-Error "Frontend build completed but dist/index.html was not found."
             Get-ChildItem -Path "." -Force
             exit 1
           }
-          Write-Host "--- Contents of $distDir ---"
-          Get-ChildItem -Path $distDir -Recurse | Select-Object Name, Length, FullName | Format-Table -AutoSize
-          if (-not (Test-Path "$distDir/index.html")) {
-            Write-Error "CRITICAL: $distDir/index.html does not exist!"
-            exit 1
-          }
-          Write-Host "Frontend build output validated successfully."
+          Write-Host "Frontend build output validated successfully (dist/index.html exists)."
 
       - name: Pre-Build Diagnostics
         shell: powershell
@@ -94,36 +71,10 @@ jobs:
           Write-Host "=== INSTALLED RUST TARGETS ==="
           rustup target list --installed
 
-          Write-Host "=== CARGO.TOML CONFIGURATION ==="
-          Get-Content "src-tauri/Cargo.toml"
-
-          Write-Host "=== TAURI.CONF.JSON CONFIGURATION ==="
-          Get-Content "src-tauri/tauri.conf.json"
-
-      - name: Validate Tauri Configuration
-        shell: powershell
-        run: |
-          Write-Host "Validating Tauri configuration..."
-          if (-not (Test-Path "src-tauri/tauri.conf.json")) {
-            Write-Error "src-tauri/tauri.conf.json is missing!"
-            exit 1
-          }
-          if (-not (Test-Path "src-tauri/Cargo.toml")) {
-            Write-Error "src-tauri/Cargo.toml is missing!"
-            exit 1
-          }
-          $conf = Get-Content "src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json
-          $targets = $conf.tauri.bundle.targets
-          if ($targets -contains "portable") {
-            Write-Error "Unsupported 'portable' bundle target found in tauri.conf.json."
-            exit 1
-          }
-          Write-Host "Tauri configuration is valid. Bundle targets: $($targets -join ', ')"
-
       - name: Build Tauri Desktop Application (Windows MSVC)
         run: npm run tauri build -- --target x86_64-pc-windows-msvc
 
-      - name: Locate and Stage Windows Artifacts
+      - name: Detect and Stage Artifacts
         shell: powershell
         run: |
           New-Item -ItemType Directory -Force -Path "./dist-portable"
@@ -172,7 +123,7 @@ jobs:
             Write-Error "CRITICAL: NSIS installer was not found under $nsisPath!"
             Write-Host "--- Complete bundle directory listing ---"
             if (Test-Path "$releasePath/bundle") {
-              Get-ChildItem -Path "$releasePath/bundle" -Recurse | Select-Object FullName, Length | Format-Table -AutoSize
+              Get-ChildItem -Path "$releasePath/bundle" -Recurse | Format-Table FullName, Length
             }
             exit 1
           }
@@ -218,98 +169,3 @@ jobs:
           name: PayrollMaster-ERP-Windows-Installer
           path: dist-installer/PayrollMaster-ERP-Windows-Installer.exe
           retention-days: 30
-
-  build-multiplatform:
-    name: Build Multi-Platform Binaries (macOS & Linux)
-    runs-on: ${{ matrix.platform.os }}
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        platform:
-          - os: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
-          - os: macos-latest
-            target: aarch64-apple-darwin
-
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js Engine
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: 'npm'
-          cache-dependency-path: 'package-lock.json'
-
-      - name: Install Linux Dependencies (Ubuntu)
-        if: matrix.platform.os == 'ubuntu-22.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
-
-      - name: Setup Rust Stable Toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.platform.target }}
-
-      - name: Rust Cache Action
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: "./src-tauri -> target"
-
-      - name: Install Frontend Dependencies
-        run: npm ci
-
-      - name: Build Web Frontend Assets
-        run: npm run build
-
-      - name: Build Tauri Desktop Bundle
-        run: npm run tauri build -- --target ${{ matrix.platform.target }}
-
-      - name: Stage Multiplatform Artifacts
-        run: |
-          mkdir -p dist-multiplatform
-          if [ -d "src-tauri/target/${{ matrix.platform.target }}/release/bundle" ]; then
-            find "src-tauri/target/${{ matrix.platform.target }}/release/bundle" -type f \( -name "*.deb" -o -name "*.AppImage" -o -name "*.dmg" -o -name "*.app" \) -exec cp {} dist-multiplatform/ \;
-          fi
-          ls -la dist-multiplatform/
-
-      - name: Upload Multiplatform Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: PayrollMaster-ERP-${{ matrix.platform.os }}
-          path: dist-multiplatform/*
-          retention-days: 30
-
-  release:
-    name: Create GitHub Release
-    runs-on: ubuntu-latest
-    needs: [build-windows]
-    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true')
-    permissions:
-      contents: write
-
-    steps:
-      - name: Download Portable Executable Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: PayrollMaster-ERP-Windows-Portable
-          path: release-artifacts
-
-      - name: Download NSIS Installer Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: PayrollMaster-ERP-Windows-Installer
-          path: release-artifacts
-
-      - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: release-artifacts/*
-          draft: false
-          prerelease: false
-          generate_release_notes: true
