@@ -13,14 +13,18 @@ on:
         description: 'Create GitHub Release on completion'
         required: false
         type: boolean
-        default: true
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/v') }}
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build-windows-portable:
-    name: Build Windows Portable Executable
+    name: Build Windows Portable & Installer
     runs-on: windows-latest
 
     steps:
@@ -50,88 +54,132 @@ jobs:
       - name: Build Web Frontend Assets
         run: npm run build
 
-      - name: Pre-Build Diagnostics
+      - name: Validate Frontend Output
         shell: powershell
         run: |
-          Write-Host "=== NODE & NPM VERSION ==="
-          node --version
-          npm --version
-          Write-Host "=== TAURI CLI VERSION ==="
-          npm exec tauri --version
-          Write-Host "=== RUST & CARGO VERSION ==="
-          rustc --version
-          cargo --version
+          Write-Host "Validating frontend build output..."
+          if (-not (Test-Path "dist/index.html")) {
+            Write-Error "Frontend build completed but expected output directory was not found."
+            Get-ChildItem -Path "." -Force
+            exit 1
+          }
+          Write-Host "Frontend build output validated successfully (dist/index.html exists)."
+
+      - name: Build & Configuration Diagnostics
+        shell: powershell
+        run: |
+          Write-Host "=== RUNTIME DIAGNOSTICS ==="
+          Write-Host "Node version: $(node --version)"
+          Write-Host "NPM version: $(npm --version)"
+          Write-Host "Tauri CLI version: $(npm exec tauri --version)"
+          Write-Host "Rustc version: $(rustc --version)"
+          Write-Host "Cargo version: $(cargo --version)"
           Write-Host "=== INSTALLED RUST TARGETS ==="
           rustup target list --installed
-          Write-Host "=== TARGET DIRECTORY STATE ==="
-          if (Test-Path "src-tauri/target") { Get-ChildItem "src-tauri/target" -Force }
 
-      - name: Build Tauri Desktop Application (Windows MSVC)
+          Write-Host "=== PACKAGE.JSON INFO ==="
+          Get-Content "package.json" | Select-Object -First 20
+
+          Write-Host "=== CARGO.TOML INFO ==="
+          Get-Content "src-tauri/Cargo.toml"
+
+          Write-Host "=== TAURI.CONF.JSON INFO ==="
+          Get-Content "src-tauri/tauri.conf.json"
+
+      - name: Validate Tauri Configuration
+        shell: powershell
+        run: |
+          Write-Host "Validating Tauri configuration..."
+          if (-not (Test-Path "src-tauri/tauri.conf.json")) {
+            Write-Error "src-tauri/tauri.conf.json is missing!"
+            exit 1
+          }
+          if (-not (Test-Path "src-tauri/Cargo.toml")) {
+            Write-Error "src-tauri/Cargo.toml is missing!"
+            exit 1
+          }
+
+          $tauriConf = Get-Content "src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json
+          $targets = $tauriConf.tauri.bundle.targets
+          if ($targets -contains "portable") {
+            Write-Error "Unsupported 'portable' bundle target found in tauri.conf.json. Tauri bundles use 'nsis' for Windows."
+            exit 1
+          }
+          Write-Host "Tauri configuration is valid. NSIS targets: $($targets -join ', ')"
+
+      - name: Build Tauri Application (Windows MSVC)
         run: npm run tauri build -- --target x86_64-pc-windows-msvc
 
-      - name: Inspect Build Outputs and Stage Artifacts
+      - name: Detect and Stage Artifacts
         shell: powershell
         run: |
           New-Item -ItemType Directory -Force -Path "./dist-portable"
           New-Item -ItemType Directory -Force -Path "./dist-installer"
 
-          Write-Host "--- Inspecting release directory ---"
-          if (Test-Path "src-tauri/target/x86_64-pc-windows-msvc/release") {
-            Get-ChildItem "src-tauri/target/x86_64-pc-windows-msvc/release" | Format-Table Name, Length
+          $releasePath = "src-tauri/target/x86_64-pc-windows-msvc/release"
+          if (-not (Test-Path $releasePath)) {
+            $releasePath = "src-tauri/target/release"
           }
 
-          Write-Host "--- Inspecting bundle directory ---"
-          if (Test-Path "src-tauri/target/x86_64-pc-windows-msvc/release/bundle") {
-            Get-ChildItem "src-tauri/target/x86_64-pc-windows-msvc/release/bundle" -Recurse | Format-Table FullName, Length
-          }
+          Write-Host "Inspecting release directory: $releasePath"
+          Get-ChildItem -Path $releasePath -File | Format-Table Name, Length
 
-          # Locate Standalone Portable EXE (exclude setup, installer, uninstaller, msi)
-          $portableExe = Get-ChildItem -Path "src-tauri/target/x86_64-pc-windows-msvc/release" -File -Filter "*.exe" -ErrorAction SilentlyContinue | Where-Object {
+          # Identify main application EXE (exclude setup, installer, uninstaller, msi, build script)
+          $allExes = Get-ChildItem -Path $releasePath -File -Filter "*.exe"
+          $mainExe = $allExes | Where-Object {
             $_.Name -notmatch "setup" -and
             $_.Name -notmatch "installer" -and
             $_.Name -notmatch "uninstall" -and
-            $_.Name -notmatch "unins"
+            $_.Name -notmatch "unins" -and
+            $_.Name -notmatch "build_script"
           } | Select-Object -First 1
 
-          if (-not $portableExe -and (Test-Path "src-tauri/target/release")) {
-            $portableExe = Get-ChildItem -Path "src-tauri/target/release" -File -Filter "*.exe" -ErrorAction SilentlyContinue | Where-Object {
-              $_.Name -notmatch "setup" -and
-              $_.Name -notmatch "installer" -and
-              $_.Name -notmatch "uninstall" -and
-              $_.Name -notmatch "unins"
-            } | Select-Object -First 1
-          }
-
-          if (-not $portableExe) {
-            Write-Error "CRITICAL: Standalone Portable EXE was not found in release directory!"
-            Write-Host "--- Complete src-tauri/target directory tree ---"
-            Get-ChildItem "src-tauri/target" -Recurse | Select-Object FullName, Length | Format-Table -AutoSize
+          if (-not $mainExe) {
+            Write-Error "CRITICAL: Main application executable could not be identified in $releasePath!"
+            Write-Host "--- Directory contents ---"
+            Get-ChildItem -Path $releasePath -Recurse | Format-Table FullName, Length
             exit 1
           }
 
-          Copy-Item -Path $portableExe.FullName -Destination "dist-portable/PayrollMaster-ERP-Windows-Portable.exe" -Force
-          Write-Host "Staged Portable EXE: $($portableExe.FullName) -> dist-portable/PayrollMaster-ERP-Windows-Portable.exe"
+          Copy-Item -Path $mainExe.FullName -Destination "dist-portable/PayrollMaster-ERP-Windows-Portable.exe" -Force
+          Write-Host "Staged Portable EXE: $($mainExe.Name) -> dist-portable/PayrollMaster-ERP-Windows-Portable.exe"
 
-          # Locate NSIS Installer
-          $nsisInstaller = Get-ChildItem -Path "src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis" -Recurse -File -Filter "*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $nsisInstaller -and (Test-Path "src-tauri/target/release/bundle/nsis")) {
-            $nsisInstaller = Get-ChildItem -Path "src-tauri/target/release/bundle/nsis" -Recurse -File -Filter "*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          # Identify NSIS Installer
+          $nsisPath = "$releasePath/bundle/nsis"
+          $nsisInstaller = $null
+          if (Test-Path $nsisPath) {
+            $nsisInstaller = Get-ChildItem -Path $nsisPath -Recurse -File -Filter "*.exe" | Select-Object -First 1
           }
 
           if (-not $nsisInstaller) {
-            Write-Error "CRITICAL: NSIS Installer was not found in bundle/nsis directory!"
-            Write-Host "--- Complete src-tauri/target directory tree ---"
-            Get-ChildItem "src-tauri/target" -Recurse | Select-Object FullName, Length | Format-Table -AutoSize
+            Write-Error "CRITICAL: NSIS installer could not be found under $nsisPath!"
+            Write-Host "--- Bundle contents ---"
+            if (Test-Path "$releasePath/bundle") {
+              Get-ChildItem -Path "$releasePath/bundle" -Recurse | Format-Table FullName, Length
+            }
             exit 1
           }
 
           Copy-Item -Path $nsisInstaller.FullName -Destination "dist-installer/PayrollMaster-ERP-Windows-Installer.exe" -Force
-          Write-Host "Staged NSIS Installer: $($nsisInstaller.FullName) -> dist-installer/PayrollMaster-ERP-Windows-Installer.exe"
+          Write-Host "Staged NSIS Installer: $($nsisInstaller.Name) -> dist-installer/PayrollMaster-ERP-Windows-Installer.exe"
 
-      - name: Verify Build Artifacts
+      - name: Validate Final Windows Artifacts
         shell: powershell
         run: |
-          Write-Host "=== BUILD ARTIFACT VERIFICATION ==="
+          Write-Host "=== FINAL WINDOWS ARTIFACTS ==="
+          $portable = Get-Item "dist-portable/PayrollMaster-ERP-Windows-Portable.exe" -ErrorAction SilentlyContinue
+          $installer = Get-Item "dist-installer/PayrollMaster-ERP-Windows-Installer.exe" -ErrorAction SilentlyContinue
+
+          if (-not $portable -or $portable.Length -eq 0) {
+            Write-Error "Artifact Validation Failed: dist-portable/PayrollMaster-ERP-Windows-Portable.exe is missing or 0 bytes!"
+            exit 1
+          }
+
+          if (-not $installer -or $installer.Length -eq 0) {
+            Write-Error "Artifact Validation Failed: dist-installer/PayrollMaster-ERP-Windows-Installer.exe is missing or 0 bytes!"
+            exit 1
+          }
+
           Get-ChildItem -Path "./dist-portable", "./dist-installer" -Recurse -File | Select-Object Name, Length, FullName | Format-Table -AutoSize
 
       - name: Upload Portable Executable Artifact
@@ -151,8 +199,7 @@ jobs:
   build-multiplatform:
     name: Build Multi-Platform Binaries (macOS & Linux)
     runs-on: ${{ matrix.platform.os }}
-    needs: build-windows-portable
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
@@ -212,3 +259,32 @@ jobs:
           name: PayrollMaster-ERP-${{ matrix.platform.os }}
           path: dist-multiplatform/*
           retention-days: 30
+
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [build-windows-portable]
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true')
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download Portable Executable Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: PayrollMaster-ERP-Windows-Portable
+          path: release-artifacts
+
+      - name: Download NSIS Installer Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: PayrollMaster-ERP-Windows-Installer
+          path: release-artifacts
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-artifacts/*
+          draft: false
+          prerelease: false
+          generate_release_notes: true
