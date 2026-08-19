@@ -103,12 +103,12 @@ jobs:
         shell: powershell
         run: |
           Write-Host "=== EXECUTING TAURI BUILD COMMAND ==="
-          npm run tauri build -- --target x86_64-pc-windows-msvc
+          npm run tauri build -- --target x86_64-pc-windows-msvc 2>&1 | Tee-Object -FilePath tauri-build.log
           $tauriExitCode = $LASTEXITCODE
+          Write-Host "Tauri build process exit code: $tauriExitCode"
 
           if ($tauriExitCode -ne 0) {
             Write-Host "=== TAURI BUILD FAILED ==="
-            Write-Host "Exit code: $tauriExitCode"
 
             Write-Host "=== CARGO TARGET DIRECTORY ==="
             if (Test-Path "src-tauri/target") {
@@ -131,7 +131,7 @@ jobs:
             }
 
             Write-Host "=== RUNNING DIRECT CARGO BUILD FOR COMPILER ERROR TRACING ==="
-            cargo build --manifest-path src-tauri/Cargo.toml --release --target x86_64-pc-windows-msvc --verbose
+            cargo build --manifest-path src-tauri/Cargo.toml --release --target x86_64-pc-windows-msvc --verbose 2>&1 | Tee-Object -FilePath cargo-build.log
             $cargoExitCode = $LASTEXITCODE
             Write-Host "Direct cargo build exited with code: $cargoExitCode"
 
@@ -139,3 +139,14 @@ jobs:
           }
 
           Write-Host "=== TAURI BUILD COMPLETED SUCCESSFULLY ==="
+
+      - name: Upload Build Diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tauri-Build-Diagnostics
+          if-no-files-found: ignore
+          path: |
+            tauri-build.log
+            cargo-build.log
+            src-tauri/target/x86_64-pc-windows-msvc/release/build
