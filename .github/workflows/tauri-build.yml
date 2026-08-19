@@ -2,9 +2,9 @@ name: Build Tauri Portable EXE
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -41,52 +41,24 @@ jobs:
       - name: Build frontend
         run: npm run build
 
-      - name: Validate build prerequisites
+      - name: Validate frontend build
         shell: powershell
         run: |
           if (-not (Test-Path "dist/index.html")) {
             throw "dist/index.html does not exist."
           }
-          if (-not (Test-Path "src-tauri/Cargo.toml")) {
-            throw "src-tauri/Cargo.toml does not exist."
-          }
-          if (-not (Test-Path "src-tauri/tauri.conf.json")) {
-            throw "src-tauri/tauri.conf.json does not exist."
-          }
-          Write-Host "All build prerequisites validated."
+          Write-Host "Frontend build output validated."
 
-      - name: Print diagnostics
-        shell: powershell
-        run: |
-          node --version
-          npm --version
-          npm exec tauri --version
-          rustc --version
-          cargo --version
-
-      - name: Build Tauri directly
+      - name: Build Tauri executable
         run: npm run tauri build -- --target x86_64-pc-windows-msvc
 
-      - name: Package Portable Executable
+      - name: Stage and Validate Portable Executable
         shell: powershell
         run: |
-          $cargoContent = Get-Content "src-tauri/Cargo.toml" -Raw
-          if ($cargoContent -match 'name\s*=\s*"([^"]+)"') {
-            $binaryName = $matches[1]
-          } else {
-            throw "Failed to extract package name from src-tauri/Cargo.toml"
-          }
-
-          $exeName = "$binaryName.exe"
-          $sourceExe = "src-tauri/target/x86_64-pc-windows-msvc/release/$exeName"
+          $sourceExe = "src-tauri/target/x86_64-pc-windows-msvc/release/payroll-master-erp.exe"
 
           if (-not (Test-Path $sourceExe)) {
-            $fallback = Get-ChildItem -Path "src-tauri/target" -Filter $exeName -Recurse -File | Select-Object -First 1
-            if ($fallback) {
-              $sourceExe = $fallback.FullName
-            } else {
-              throw "Could not locate application executable $exeName"
-            }
+            throw "Application executable not found at $sourceExe"
           }
 
           New-Item -ItemType Directory -Force -Path "dist-portable" | Out-Null
@@ -94,7 +66,7 @@ jobs:
           Copy-Item -Path $sourceExe -Destination $destExe -Force
 
           if (-not (Test-Path $destExe)) {
-            throw "Validation failed: $destExe was not created."
+            throw "Validation failed: $destExe does not exist."
           }
 
           $destItem = Get-Item $destExe
@@ -102,12 +74,16 @@ jobs:
             throw "Validation failed: $destExe size is 0 bytes."
           }
 
+          if ($destItem.Extension -ne ".exe") {
+            throw "Validation failed: File extension is not .exe."
+          }
+
           $portableItems = Get-ChildItem -Path "dist-portable" -File
           if ($portableItems.Count -ne 1) {
             throw "Validation failed: dist-portable must contain exactly ONE file, found $($portableItems.Count)."
           }
 
-          Write-Host "Successfully generated and verified: $($destItem.FullName) ($($destItem.Length) bytes)"
+          Write-Host "Verified portable executable: $($destItem.FullName) ($($destItem.Length) bytes)"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
