@@ -45,40 +45,103 @@ jobs:
           workspaces: "./src-tauri -> target"
 
       - name: Install Frontend Dependencies
-        run: npm ci || npm install
+        run: npm ci
 
       - name: Build Web Frontend Assets
         run: npm run build
 
-      - name: Build Tauri Portable Executable & NSIS Bundle
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tagName: ${{ (startsWith(github.ref, 'refs/tags/v') || github.event.inputs.create_release == 'true') && 'v__VERSION__' || '' }}
-          releaseName: 'PayrollMaster ERP Portable v__VERSION__'
-          releaseBody: 'Standalone Portable Windows Executable for Multi-Company Payroll Management System ERP.'
-          releaseDraft: true
-          prerelease: false
-          args: --target x86_64-pc-windows-msvc
+      - name: Pre-Build Diagnostics
+        shell: powershell
+        run: |
+          Write-Host "=== NODE & NPM VERSION ==="
+          node --version
+          npm --version
+          Write-Host "=== TAURI CLI VERSION ==="
+          npm exec tauri --version
+          Write-Host "=== RUST & CARGO VERSION ==="
+          rustc --version
+          cargo --version
+          Write-Host "=== INSTALLED RUST TARGETS ==="
+          rustup target list --installed
+          Write-Host "=== TARGET DIRECTORY STATE ==="
+          if (Test-Path "src-tauri/target") { Get-ChildItem "src-tauri/target" -Force }
 
-      - name: Stage Portable EXE Artifacts
+      - name: Build Tauri Desktop Application (Windows MSVC)
+        run: npm run tauri build -- --target x86_64-pc-windows-msvc
+
+      - name: Inspect Build Outputs and Stage Artifacts
         shell: powershell
         run: |
           New-Item -ItemType Directory -Force -Path "./dist-portable"
-          if (Test-Path "./src-tauri/target/x86_64-pc-windows-msvc/release") {
-            Get-ChildItem -Path "./src-tauri/target/x86_64-pc-windows-msvc/release" -Recurse -Include *.exe, *.msi -ErrorAction SilentlyContinue | Copy-Item -Destination "./dist-portable/" -Force
-          }
-          if (Test-Path "./src-tauri/target/release") {
-            Get-ChildItem -Path "./src-tauri/target/release" -Recurse -Include *.exe, *.msi -ErrorAction SilentlyContinue | Copy-Item -Destination "./dist-portable/" -Force
-          }
-          Get-ChildItem -Path "./dist-portable"
+          New-Item -ItemType Directory -Force -Path "./dist-installer"
 
-      - name: Upload Standalone Portable EXE Artifacts
+          Write-Host "--- Inspecting release directory ---"
+          if (Test-Path "src-tauri/target/x86_64-pc-windows-msvc/release") {
+            Get-ChildItem "src-tauri/target/x86_64-pc-windows-msvc/release" | Format-Table Name, Length
+          }
+
+          Write-Host "--- Inspecting bundle directory ---"
+          if (Test-Path "src-tauri/target/x86_64-pc-windows-msvc/release/bundle") {
+            Get-ChildItem "src-tauri/target/x86_64-pc-windows-msvc/release/bundle" -Recurse | Format-Table FullName, Length
+          }
+
+          # Locate Standalone Portable EXE (exclude setup, installer, uninstaller)
+          $portableExe = Get-ChildItem -Path "src-tauri/target/x86_64-pc-windows-msvc/release" -File -Filter "*.exe" -ErrorAction SilentlyContinue | Where-Object {
+            $_.Name -notmatch "setup" -and
+            $_.Name -notmatch "installer" -and
+            $_.Name -notmatch "uninstall"
+          } | Select-Object -First 1
+
+          if (-not $portableExe -and (Test-Path "src-tauri/target/release")) {
+            $portableExe = Get-ChildItem -Path "src-tauri/target/release" -File -Filter "*.exe" -ErrorAction SilentlyContinue | Where-Object {
+              $_.Name -notmatch "setup" -and
+              $_.Name -notmatch "installer" -and
+              $_.Name -notmatch "uninstall"
+            } | Select-Object -First 1
+          }
+
+          if (-not $portableExe) {
+            Write-Error "CRITICAL: Standalone Portable EXE was not found in release directory!"
+            Get-ChildItem "src-tauri/target" -Recurse -Filter "*.exe" -ErrorAction SilentlyContinue
+            exit 1
+          }
+
+          Copy-Item -Path $portableExe.FullName -Destination "dist-portable/PayrollMaster-ERP-Windows-Portable.exe" -Force
+          Write-Host "Staged Portable EXE: $($portableExe.FullName) -> dist-portable/PayrollMaster-ERP-Windows-Portable.exe"
+
+          # Locate NSIS Installer
+          $nsisInstaller = Get-ChildItem -Path "src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis" -Recurse -File -Filter "*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $nsisInstaller -and (Test-Path "src-tauri/target/release/bundle/nsis")) {
+            $nsisInstaller = Get-ChildItem -Path "src-tauri/target/release/bundle/nsis" -Recurse -File -Filter "*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+
+          if (-not $nsisInstaller) {
+            Write-Error "CRITICAL: NSIS Installer was not found in bundle/nsis directory!"
+            Get-ChildItem "src-tauri/target" -Recurse -Filter "*.exe" -ErrorAction SilentlyContinue
+            exit 1
+          }
+
+          Copy-Item -Path $nsisInstaller.FullName -Destination "dist-installer/PayrollMaster-ERP-Windows-Installer.exe" -Force
+          Write-Host "Staged NSIS Installer: $($nsisInstaller.FullName) -> dist-installer/PayrollMaster-ERP-Windows-Installer.exe"
+
+      - name: Verify Build Artifacts
+        shell: powershell
+        run: |
+          Write-Host "=== BUILD ARTIFACT VERIFICATION ==="
+          Get-ChildItem -Path "./dist-portable", "./dist-installer" -Recurse -File | Select-Object Name, Length, FullName | Format-Table -AutoSize
+
+      - name: Upload Portable Executable Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: PayrollMaster-ERP-Windows-Portable-v1.0.0
-          path: dist-portable/*
+          name: PayrollMaster-ERP-Windows-Portable
+          path: dist-portable/PayrollMaster-ERP-Windows-Portable.exe
+          retention-days: 30
+
+      - name: Upload NSIS Installer Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PayrollMaster-ERP-Windows-Installer
+          path: dist-installer/PayrollMaster-ERP-Windows-Installer.exe
           retention-days: 30
 
   build-multiplatform:
@@ -123,16 +186,22 @@ jobs:
           workspaces: "./src-tauri -> target"
 
       - name: Install Dependencies
-        run: npm ci || npm install
+        run: npm ci
 
-      - name: Build Tauri Bundle
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build Web Frontend Assets
+        run: npm run build
+
+      - name: Build Tauri Desktop Bundle
+        run: npm run tauri build -- --target ${{ matrix.platform.target }}
+
+      - name: Stage Multiplatform Artifacts
+        run: |
+          mkdir -p dist-multiplatform
+          find src-tauri/target/${{ matrix.platform.target }}/release/bundle -type f \( -name "*.deb" -o -name "*.AppImage" -o -name "*.dmg" -o -name "*.app" \) -exec cp {} dist-multiplatform/ \; 2>/dev/null || true
+
+      - name: Upload Multiplatform Artifacts
+        uses: actions/upload-artifact@v4
         with:
-          tagName: ${{ (startsWith(github.ref, 'refs/tags/v') || github.event.inputs.create_release == 'true') && 'v__VERSION__' || '' }}
-          releaseName: 'PayrollMaster ERP v__VERSION__'
-          releaseBody: 'Cross-Platform Desktop ERP Bundle.'
-          releaseDraft: true
-          prerelease: false
-          args: --target ${{ matrix.platform.target }}
+          name: PayrollMaster-ERP-${{ matrix.platform.os }}
+          path: dist-multiplatform/*
+          retention-days: 30
