@@ -37,5 +37,11 @@
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.3"
+  },
+  "optionalDependencies": {
+    "@esbuild/win32-x64": "^0.25.0",
+    "@rollup/rollup-win32-x64-msvc": "^4.30.0",
+    "@tailwindcss/oxide-win32-x64-msvc": "^4.0.0",
+    "lightningcss-win32-x64-msvc": "^1.29.0"
   }
 }
