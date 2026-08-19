@@ -277,6 +277,7 @@ export interface PayslipRecord {
   lateDeduction: number;
   undertimeDeduction: number;
   absentDeduction: number;
+  absenceDeduction?: number;
   sssEE: number;
   sssER: number;
   sssEC: number;
@@ -306,6 +307,8 @@ export interface PayrollRun {
   id: string;
   companyId: string;
   periodId: string;
+  periodName?: string;
+  payrollPeriodId?: string;
   runDate: string;
   runBy: string;
   totalEmployees: number;

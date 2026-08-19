@@ -63,8 +63,12 @@ jobs:
         shell: powershell
         run: |
           New-Item -ItemType Directory -Force -Path "./dist-portable"
-          Get-ChildItem -Path "./src-tauri/target/x86_64-pc-windows-msvc/release/bundle/" -Recurse -Include *.exe, *.msi | Copy-Item -Destination "./dist-portable/" -Force
-          Get-ChildItem -Path "./src-tauri/target/release/" -Include *.exe | Copy-Item -Destination "./dist-portable/" -Force
+          if (Test-Path "./src-tauri/target/x86_64-pc-windows-msvc/release") {
+            Get-ChildItem -Path "./src-tauri/target/x86_64-pc-windows-msvc/release" -Recurse -Include *.exe, *.msi -ErrorAction SilentlyContinue | Copy-Item -Destination "./dist-portable/" -Force
+          }
+          if (Test-Path "./src-tauri/target/release") {
+            Get-ChildItem -Path "./src-tauri/target/release" -Recurse -Include *.exe, *.msi -ErrorAction SilentlyContinue | Copy-Item -Destination "./dist-portable/" -Force
+          }
           Get-ChildItem -Path "./dist-portable"
 
       - name: Upload Standalone Portable EXE Artifacts
