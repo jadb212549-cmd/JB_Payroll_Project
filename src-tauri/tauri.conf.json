@@ -11,6 +11,13 @@
     "distDir": "../dist"
   },
   "tauri": {
+    "allowlist": {
+      "all": false,
+      "shell": {
+        "all": false,
+        "open": true
+      }
+    },
     "bundle": {
       "active": false,
       "category": "Business",
