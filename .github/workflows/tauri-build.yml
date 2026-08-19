@@ -85,24 +85,27 @@ jobs:
             Get-ChildItem "src-tauri/target/x86_64-pc-windows-msvc/release/bundle" -Recurse | Format-Table FullName, Length
           }
 
-          # Locate Standalone Portable EXE (exclude setup, installer, uninstaller)
+          # Locate Standalone Portable EXE (exclude setup, installer, uninstaller, msi)
           $portableExe = Get-ChildItem -Path "src-tauri/target/x86_64-pc-windows-msvc/release" -File -Filter "*.exe" -ErrorAction SilentlyContinue | Where-Object {
             $_.Name -notmatch "setup" -and
             $_.Name -notmatch "installer" -and
-            $_.Name -notmatch "uninstall"
+            $_.Name -notmatch "uninstall" -and
+            $_.Name -notmatch "unins"
           } | Select-Object -First 1
 
           if (-not $portableExe -and (Test-Path "src-tauri/target/release")) {
             $portableExe = Get-ChildItem -Path "src-tauri/target/release" -File -Filter "*.exe" -ErrorAction SilentlyContinue | Where-Object {
               $_.Name -notmatch "setup" -and
               $_.Name -notmatch "installer" -and
-              $_.Name -notmatch "uninstall"
+              $_.Name -notmatch "uninstall" -and
+              $_.Name -notmatch "unins"
             } | Select-Object -First 1
           }
 
           if (-not $portableExe) {
             Write-Error "CRITICAL: Standalone Portable EXE was not found in release directory!"
-            Get-ChildItem "src-tauri/target" -Recurse -Filter "*.exe" -ErrorAction SilentlyContinue
+            Write-Host "--- Complete src-tauri/target directory tree ---"
+            Get-ChildItem "src-tauri/target" -Recurse | Select-Object FullName, Length | Format-Table -AutoSize
             exit 1
           }
 
@@ -117,7 +120,8 @@ jobs:
 
           if (-not $nsisInstaller) {
             Write-Error "CRITICAL: NSIS Installer was not found in bundle/nsis directory!"
-            Get-ChildItem "src-tauri/target" -Recurse -Filter "*.exe" -ErrorAction SilentlyContinue
+            Write-Host "--- Complete src-tauri/target directory tree ---"
+            Get-ChildItem "src-tauri/target" -Recurse | Select-Object FullName, Length | Format-Table -AutoSize
             exit 1
           }
 
@@ -197,7 +201,10 @@ jobs:
       - name: Stage Multiplatform Artifacts
         run: |
           mkdir -p dist-multiplatform
-          find src-tauri/target/${{ matrix.platform.target }}/release/bundle -type f \( -name "*.deb" -o -name "*.AppImage" -o -name "*.dmg" -o -name "*.app" \) -exec cp {} dist-multiplatform/ \; 2>/dev/null || true
+          if [ -d "src-tauri/target/${{ matrix.platform.target }}/release/bundle" ]; then
+            find "src-tauri/target/${{ matrix.platform.target }}/release/bundle" -type f \( -name "*.deb" -o -name "*.AppImage" -o -name "*.dmg" -o -name "*.app" \) -exec cp {} dist-multiplatform/ \;
+          fi
+          ls -la dist-multiplatform/
 
       - name: Upload Multiplatform Artifacts
         uses: actions/upload-artifact@v4
