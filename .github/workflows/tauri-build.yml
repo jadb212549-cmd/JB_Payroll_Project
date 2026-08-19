@@ -55,10 +55,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: v__VERSION__
+          tagName: ${{ (startsWith(github.ref, 'refs/tags/v') || github.event.inputs.create_release == 'true') && 'v__VERSION__' || '' }}
           releaseName: 'PayrollMaster ERP Portable v__VERSION__'
           releaseBody: 'Standalone Portable Windows Executable for Multi-Company Payroll Management System ERP.'
-          releaseDraft: false
+          releaseDraft: true
           prerelease: false
           args: --target x86_64-pc-windows-msvc
 
@@ -130,9 +130,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: v__VERSION__
+          tagName: ${{ (startsWith(github.ref, 'refs/tags/v') || github.event.inputs.create_release == 'true') && 'v__VERSION__' || '' }}
           releaseName: 'PayrollMaster ERP v__VERSION__'
           releaseBody: 'Cross-Platform Desktop ERP Bundle.'
-          releaseDraft: false
+          releaseDraft: true
           prerelease: false
           args: --target ${{ matrix.platform.target }}
