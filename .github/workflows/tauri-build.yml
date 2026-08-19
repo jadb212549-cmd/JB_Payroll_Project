@@ -80,19 +80,18 @@ jobs:
           New-Item -ItemType Directory -Force -Path "./dist-portable"
           New-Item -ItemType Directory -Force -Path "./dist-installer"
 
-          $releasePath = "src-tauri/target/x86_64-pc-windows-msvc/release"
-          if (-not (Test-Path $releasePath)) {
-            $releasePath = "src-tauri/target/release"
+          Write-Host "=== SEARCHING FOR BUILD ARTIFACTS ==="
+          if (Test-Path "src-tauri/target") {
+            Get-ChildItem -Path "src-tauri/target" -Recurse -File | Select-Object FullName, Length | Format-Table -AutoSize
           }
 
-          Write-Host "Inspecting release directory: $releasePath"
-          if (Test-Path $releasePath) {
-            Get-ChildItem -Path $releasePath -File | Format-Table Name, Length
-          }
-
-          # Identify main application executable (exclude setup, installer, uninstaller, msi, build_script)
-          $allExes = Get-ChildItem -Path $releasePath -File -Filter "*.exe" -ErrorAction SilentlyContinue
-          $mainExe = $allExes | Where-Object {
+          # 1. Locate Standalone Application EXE (exclude setup, installer, uninstaller, msi, build_script, test)
+          $portableExe = Get-ChildItem -Path "src-tauri/target" -Recurse -File -Filter "*.exe" -ErrorAction SilentlyContinue | Where-Object {
+            $_.FullName -notmatch "bundle" -and
+            $_.FullName -notmatch "deps" -and
+            $_.FullName -notmatch "build" -and
+            $_.FullName -notmatch "incremental" -and
+            $_.FullName -notmatch "examples" -and
             $_.Name -notmatch "setup" -and
             $_.Name -notmatch "installer" -and
             $_.Name -notmatch "uninstall" -and
@@ -100,56 +99,44 @@ jobs:
             $_.Name -notmatch "build_script"
           } | Select-Object -First 1
 
-          if (-not $mainExe) {
-            $mainExe = Get-ChildItem -Path $releasePath -Recurse -File -Filter "*.exe" -ErrorAction SilentlyContinue | Where-Object {
+          if (-not $portableExe) {
+            $portableExe = Get-ChildItem -Path "src-tauri/target" -Recurse -File -Filter "*.exe" -ErrorAction SilentlyContinue | Where-Object {
+              $_.FullName -match "release" -and
               $_.FullName -notmatch "bundle" -and
               $_.FullName -notmatch "deps" -and
-              $_.FullName -notmatch "build" -and
-              $_.FullName -notmatch "incremental" -and
               $_.Name -notmatch "setup" -and
               $_.Name -notmatch "installer" -and
-              $_.Name -notmatch "uninstall" -and
-              $_.Name -notmatch "unins" -and
-              $_.Name -notmatch "build_script"
+              $_.Name -notmatch "uninstall"
             } | Select-Object -First 1
           }
 
-          if (-not $mainExe) {
-            Write-Error "CRITICAL: Standalone application executable was not found in $releasePath!"
-            Write-Host "--- Complete target directory listing ---"
-            if (Test-Path "src-tauri/target") {
-              Get-ChildItem -Path "src-tauri/target" -Recurse | Select-Object FullName, Length | Format-Table -AutoSize
-            }
+          if (-not $portableExe) {
+            Write-Error "CRITICAL: Standalone application executable was not found!"
             exit 1
           }
 
-          Copy-Item -Path $mainExe.FullName -Destination "dist-portable/PayrollMaster-ERP-Windows-Portable.exe" -Force
-          Write-Host "Staged Portable EXE: $($mainExe.Name) -> dist-portable/PayrollMaster-ERP-Windows-Portable.exe"
+          Copy-Item -Path $portableExe.FullName -Destination "dist-portable/PayrollMaster-ERP-Windows-Portable.exe" -Force
+          Write-Host "Staged Portable EXE: $($portableExe.FullName) -> dist-portable/PayrollMaster-ERP-Windows-Portable.exe"
 
-          # Identify NSIS Installer
-          $nsisInstaller = $null
-          $nsisPath = "$releasePath/bundle/nsis"
-          if (Test-Path $nsisPath) {
-            $nsisInstaller = Get-ChildItem -Path $nsisPath -Recurse -File -Filter "*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-          }
+          # 2. Locate NSIS Installer EXE
+          $nsisInstaller = Get-ChildItem -Path "src-tauri/target" -Recurse -File -Filter "*.exe" -ErrorAction SilentlyContinue | Where-Object {
+            $_.FullName -match "bundle" -and
+            ($_.FullName -match "nsis" -or $_.Name -match "setup" -or $_.Name -match "installer")
+          } | Select-Object -First 1
 
-          if (-not $nsisInstaller -and (Test-Path "$releasePath/bundle")) {
-            $nsisInstaller = Get-ChildItem -Path "$releasePath/bundle" -Recurse -File -Filter "*.exe" -ErrorAction SilentlyContinue | Where-Object {
-              $_.Name -match "setup" -or $_.Name -match "installer" -or $_.FullName -match "nsis"
+          if (-not $nsisInstaller) {
+            $nsisInstaller = Get-ChildItem -Path "src-tauri/target" -Recurse -File -Filter "*.exe" -ErrorAction SilentlyContinue | Where-Object {
+              $_.FullName -match "bundle"
             } | Select-Object -First 1
           }
 
           if (-not $nsisInstaller) {
-            Write-Error "CRITICAL: NSIS installer was not found under $releasePath/bundle!"
-            Write-Host "--- Complete bundle directory listing ---"
-            if (Test-Path "$releasePath/bundle") {
-              Get-ChildItem -Path "$releasePath/bundle" -Recurse | Format-Table FullName, Length
-            }
+            Write-Error "CRITICAL: NSIS installer executable was not found under bundle directory!"
             exit 1
           }
 
           Copy-Item -Path $nsisInstaller.FullName -Destination "dist-installer/PayrollMaster-ERP-Windows-Installer.exe" -Force
-          Write-Host "Staged NSIS Installer: $($nsisInstaller.Name) -> dist-installer/PayrollMaster-ERP-Windows-Installer.exe"
+          Write-Host "Staged NSIS Installer: $($nsisInstaller.FullName) -> dist-installer/PayrollMaster-ERP-Windows-Installer.exe"
 
       - name: Validate Final Windows Artifacts
         shell: powershell
