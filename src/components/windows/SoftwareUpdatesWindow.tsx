@@ -150,8 +150,28 @@ export const SoftwareUpdatesWindow: React.FC = () => {
               <strong className="text-slate-900">{CURRENT_APP_VERSION.releaseDate}</strong>
             </div>
             <div>
-              <span className="text-slate-400 block text-[10px]">DB Schema:</span>
-              <strong className="text-slate-900">v{CURRENT_APP_VERSION.dbSchemaVersion}</strong>
+              <span className="text-slate-400 block text-[10px]">Target Architecture:</span>
+              <strong className="text-slate-900">Tauri Windows Portable (.exe)</strong>
+            </div>
+          </div>
+
+          {/* GitHub Workflow Banner */}
+          <div className="p-3 bg-gradient-to-r from-slate-900 to-slate-800 text-white rounded-xl space-y-2 border border-slate-700 shadow-xs">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <FileCode className="w-4 h-4 text-emerald-400" />
+                <span className="font-bold text-xs">Tauri GitHub Workflow for Portable EXE</span>
+              </div>
+              <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono text-[10px] rounded-full font-semibold">
+                CI/CD Ready
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-300 leading-relaxed">
+              Automated build pipeline configured at <code className="text-emerald-300 font-mono">.github/workflows/tauri-build.yml</code>. Compiles frontend assets and Rust native code into standalone portable Windows binaries on tag push or manual dispatch.
+            </p>
+            <div className="flex items-center gap-2 pt-1 font-mono text-[10px] text-slate-400">
+              <Tag className="w-3 h-3 text-slate-400" />
+              <span>Target: <strong className="text-slate-200">{CURRENT_APP_VERSION.tauriPortableTarget}</strong></span>
             </div>
           </div>
 

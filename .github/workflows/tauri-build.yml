@@ -1,0 +1,129 @@
+name: Build Tauri Portable EXE
+
+on:
+  push:
+    branches: [ main, master ]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Create GitHub Release on completion'
+        required: false
+        type: boolean
+        default: true
+
+jobs:
+  build-windows-portable:
+    name: Build Windows Portable Executable
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js Engine
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Setup Rust Stable Toolchain (MSVC)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Rust Cache Action
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Install Frontend Dependencies
+        run: npm ci || npm install
+
+      - name: Build Web Frontend Assets
+        run: npm run build
+
+      - name: Build Tauri Portable Executable & NSIS Bundle
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: v__VERSION__
+          releaseName: 'PayrollMaster ERP Portable v__VERSION__'
+          releaseBody: 'Standalone Portable Windows Executable for Multi-Company Payroll Management System ERP.'
+          releaseDraft: false
+          prerelease: false
+          args: --target x86_64-pc-windows-msvc
+
+      - name: Stage Portable EXE Artifacts
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path "./dist-portable"
+          Get-ChildItem -Path "./src-tauri/target/x86_64-pc-windows-msvc/release/bundle/" -Recurse -Include *.exe, *.msi | Copy-Item -Destination "./dist-portable/" -Force
+          Get-ChildItem -Path "./src-tauri/target/release/" -Include *.exe | Copy-Item -Destination "./dist-portable/" -Force
+          Get-ChildItem -Path "./dist-portable"
+
+      - name: Upload Standalone Portable EXE Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: PayrollMaster-ERP-Windows-Portable-v1.0.0
+          path: dist-portable/*
+          retention-days: 30
+
+  build-multiplatform:
+    name: Build Multi-Platform Binaries (macOS & Linux)
+    runs-on: ${{ matrix.platform.os }}
+    needs: build-windows-portable
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - os: macos-latest
+            target: aarch64-apple-darwin
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js Engine
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Linux Dependencies (Ubuntu)
+        if: matrix.platform.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Setup Rust Stable Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform.target }}
+
+      - name: Rust Cache Action
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Install Dependencies
+        run: npm ci || npm install
+
+      - name: Build Tauri Bundle
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: v__VERSION__
+          releaseName: 'PayrollMaster ERP v__VERSION__'
+          releaseBody: 'Cross-Platform Desktop ERP Bundle.'
+          releaseDraft: false
+          prerelease: false
+          args: --target ${{ matrix.platform.target }}
