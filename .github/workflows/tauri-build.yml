@@ -108,7 +108,18 @@ jobs:
           Write-Host "Tauri build process exit code: $tauriExitCode"
 
           if ($tauriExitCode -ne 0) {
-            Write-Host "=== TAURI BUILD FAILED ==="
+            Write-Host "===== TAURI BUILD FAILURE ====="
+            if (Test-Path "tauri-build.log") {
+              Get-Content tauri-build.log
+            }
+
+            Write-Host "=== EXTRACTED COMPILER & BUILD-SCRIPT ERRORS ==="
+            $errorLines = @()
+            if (Test-Path "tauri-build.log") {
+              $errorLines = Select-String -Path tauri-build.log -Pattern "error:", "Caused by:", "error\[E", "panicked", "failed to run custom build command", "could not compile", "link.exe", "cl.exe"
+              $errorLines | ForEach-Object { Write-Host $_.Line }
+            }
+            Write-Host "===== END TAURI BUILD FAILURE ====="
 
             Write-Host "=== CARGO TARGET DIRECTORY ==="
             if (Test-Path "src-tauri/target") {
@@ -134,6 +145,61 @@ jobs:
             cargo build --manifest-path src-tauri/Cargo.toml --release --target x86_64-pc-windows-msvc --verbose 2>&1 | Tee-Object -FilePath cargo-build.log
             $cargoExitCode = $LASTEXITCODE
             Write-Host "Direct cargo build exited with code: $cargoExitCode"
+
+            if ($cargoExitCode -ne 0) {
+              Write-Host "===== CARGO BUILD LOG START ====="
+              if (Test-Path "cargo-build.log") {
+                Get-Content cargo-build.log
+              }
+              Write-Host "===== CARGO BUILD LOG END ====="
+            }
+
+            # Generate GitHub Step Summary
+            $tauriVer = (npm exec tauri --version 2>&1 | Out-String).Trim()
+            $rustVer = (rustc --version 2>&1 | Out-String).Trim()
+            $firstErrorLine = "No specific error line matched regex filter"
+            if ($errorLines.Count -gt 0) {
+              $firstErrorLine = ($errorLines | Select-Object -First 1).Line
+            }
+
+            $extractedSnippet = ($errorLines | Select-Object -First 25 | ForEach-Object { $_.Line }) -join "`n"
+            if (-not $extractedSnippet) {
+              $extractedSnippet = "Please inspect full tauri-build.log artifact"
+            }
+
+            $summaryMarkdown = @"
+# Tauri Build Failure
+
+## Tauri Version
+````
+$tauriVer
+````
+
+## Rust Version
+````
+$rustVer
+````
+
+## Target
+x86_64-pc-windows-msvc
+
+## First Error
+````
+$firstErrorLine
+````
+
+## Complete Error
+````
+$extractedSnippet
+````
+
+## Cargo Result
+Exit Code: $cargoExitCode
+
+## Tauri Result
+Exit Code: $tauriExitCode
+"@
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value $summaryMarkdown
 
             exit $tauriExitCode
           }
