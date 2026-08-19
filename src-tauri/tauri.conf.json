@@ -12,7 +12,7 @@
   },
   "tauri": {
     "bundle": {
-      "active": true,
+      "active": false,
       "category": "Business",
       "copyright": "Multi-Company Payroll ERP System 2026",
       "deb": {
@@ -34,7 +34,7 @@
       },
       "resources": [],
       "shortDescription": "Multi-Company Payroll ERP System",
-      "targets": ["nsis"]
+      "targets": []
     },
     "security": {
       "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;"
