@@ -101,6 +101,20 @@ jobs:
           } | Select-Object -First 1
 
           if (-not $mainExe) {
+            $mainExe = Get-ChildItem -Path $releasePath -Recurse -File -Filter "*.exe" -ErrorAction SilentlyContinue | Where-Object {
+              $_.FullName -notmatch "bundle" -and
+              $_.FullName -notmatch "deps" -and
+              $_.FullName -notmatch "build" -and
+              $_.FullName -notmatch "incremental" -and
+              $_.Name -notmatch "setup" -and
+              $_.Name -notmatch "installer" -and
+              $_.Name -notmatch "uninstall" -and
+              $_.Name -notmatch "unins" -and
+              $_.Name -notmatch "build_script"
+            } | Select-Object -First 1
+          }
+
+          if (-not $mainExe) {
             Write-Error "CRITICAL: Standalone application executable was not found in $releasePath!"
             Write-Host "--- Complete target directory listing ---"
             if (Test-Path "src-tauri/target") {
@@ -113,14 +127,20 @@ jobs:
           Write-Host "Staged Portable EXE: $($mainExe.Name) -> dist-portable/PayrollMaster-ERP-Windows-Portable.exe"
 
           # Identify NSIS Installer
-          $nsisPath = "$releasePath/bundle/nsis"
           $nsisInstaller = $null
+          $nsisPath = "$releasePath/bundle/nsis"
           if (Test-Path $nsisPath) {
             $nsisInstaller = Get-ChildItem -Path $nsisPath -Recurse -File -Filter "*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
           }
 
+          if (-not $nsisInstaller -and (Test-Path "$releasePath/bundle")) {
+            $nsisInstaller = Get-ChildItem -Path "$releasePath/bundle" -Recurse -File -Filter "*.exe" -ErrorAction SilentlyContinue | Where-Object {
+              $_.Name -match "setup" -or $_.Name -match "installer" -or $_.FullName -match "nsis"
+            } | Select-Object -First 1
+          }
+
           if (-not $nsisInstaller) {
-            Write-Error "CRITICAL: NSIS installer was not found under $nsisPath!"
+            Write-Error "CRITICAL: NSIS installer was not found under $releasePath/bundle!"
             Write-Host "--- Complete bundle directory listing ---"
             if (Test-Path "$releasePath/bundle") {
               Get-ChildItem -Path "$releasePath/bundle" -Recurse | Format-Table FullName, Length
