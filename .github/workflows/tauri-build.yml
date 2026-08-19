@@ -19,7 +19,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -38,63 +38,76 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build Frontend
+      - name: Build frontend
         run: npm run build
 
       - name: Validate build prerequisites
         shell: powershell
         run: |
           if (-not (Test-Path "dist/index.html")) {
-            throw "dist/index.html does not exist!"
+            throw "dist/index.html does not exist."
           }
           if (-not (Test-Path "src-tauri/Cargo.toml")) {
-            throw "src-tauri/Cargo.toml does not exist!"
+            throw "src-tauri/Cargo.toml does not exist."
           }
           if (-not (Test-Path "src-tauri/tauri.conf.json")) {
-            throw "src-tauri/tauri.conf.json does not exist!"
+            throw "src-tauri/tauri.conf.json does not exist."
           }
-          Write-Host "Prerequisites validated successfully."
+          Write-Host "All build prerequisites validated."
 
-      - name: Tauri Build
-        run: npm run tauri build -- --target x86_64-pc-windows-msvc
-
-      - name: Locate, Copy, and Validate Portable Executable
+      - name: Print diagnostics
         shell: powershell
         run: |
-          New-Item -ItemType Directory -Force -Path "dist-portable" | Out-Null
+          node --version
+          npm --version
+          npm exec tauri --version
+          rustc --version
+          cargo --version
 
-          $exePath = "src-tauri/target/x86_64-pc-windows-msvc/release/payroll-master-erp.exe"
-          if (-not (Test-Path $exePath)) {
-            $fallback = Get-ChildItem -Path "src-tauri/target" -Filter "payroll-master-erp.exe" -Recurse -File | Select-Object -First 1
-            if ($null -ne $fallback) {
-              $exePath = $fallback.FullName
+      - name: Build Tauri directly
+        run: npm run tauri build -- --target x86_64-pc-windows-msvc
+
+      - name: Package Portable Executable
+        shell: powershell
+        run: |
+          $cargoContent = Get-Content "src-tauri/Cargo.toml" -Raw
+          if ($cargoContent -match 'name\s*=\s*"([^"]+)"') {
+            $binaryName = $matches[1]
+          } else {
+            throw "Failed to extract package name from src-tauri/Cargo.toml"
+          }
+
+          $exeName = "$binaryName.exe"
+          $sourceExe = "src-tauri/target/x86_64-pc-windows-msvc/release/$exeName"
+
+          if (-not (Test-Path $sourceExe)) {
+            $fallback = Get-ChildItem -Path "src-tauri/target" -Filter $exeName -Recurse -File | Select-Object -First 1
+            if ($fallback) {
+              $sourceExe = $fallback.FullName
             } else {
-              throw "Could not locate payroll-master-erp.exe!"
+              throw "Could not locate application executable $exeName"
             }
           }
 
-          $destPath = "dist-portable/PayrollMaster-ERP-Portable.exe"
-          Copy-Item -Path $exePath -Destination $destPath -Force
+          New-Item -ItemType Directory -Force -Path "dist-portable" | Out-Null
+          $destExe = "dist-portable/PayrollMaster-ERP-Portable.exe"
+          Copy-Item -Path $sourceExe -Destination $destExe -Force
 
-          if (-not (Test-Path $destPath)) {
-            throw "Destination executable $destPath does not exist!"
+          if (-not (Test-Path $destExe)) {
+            throw "Validation failed: $destExe was not created."
           }
 
-          $fileInfo = Get-Item $destPath
-          if ($fileInfo.Length -le 0) {
-            throw "Executable size is 0 bytes!"
+          $destItem = Get-Item $destExe
+          if ($destItem.Length -le 0) {
+            throw "Validation failed: $destExe size is 0 bytes."
           }
 
-          if ($fileInfo.Extension -ne ".exe") {
-            throw "File extension is not .exe!"
+          $portableItems = Get-ChildItem -Path "dist-portable" -File
+          if ($portableItems.Count -ne 1) {
+            throw "Validation failed: dist-portable must contain exactly ONE file, found $($portableItems.Count)."
           }
 
-          $portableFiles = Get-ChildItem -Path "dist-portable" -File
-          if ($portableFiles.Count -ne 1) {
-            throw "dist-portable does not contain exactly one file! Found: $($portableFiles.Count)"
-          }
-
-          Write-Host "Portable executable validated: $($fileInfo.FullName) ($($fileInfo.Length) bytes)"
+          Write-Host "Successfully generated and verified: $($destItem.FullName) ($($destItem.Length) bytes)"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
