@@ -29,6 +29,7 @@ jobs:
         with:
           node-version: 20
           cache: 'npm'
+          cache-dependency-path: 'package-lock.json'
 
       - name: Setup Rust Stable Toolchain (MSVC)
         uses: dtolnay/rust-toolchain@stable
@@ -96,6 +97,7 @@ jobs:
         with:
           node-version: 20
           cache: 'npm'
+          cache-dependency-path: 'package-lock.json'
 
       - name: Install Linux Dependencies (Ubuntu)
         if: matrix.platform.os == 'ubuntu-22.04'
